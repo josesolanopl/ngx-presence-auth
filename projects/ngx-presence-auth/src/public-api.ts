@@ -2,6 +2,6 @@
  * Public API Surface of ngx-presence-auth
  */
 
-export * from './lib/ngx-presence-auth.service';
-export * from './lib/ngx-presence-auth.component';
-export * from './lib/ngx-presence-auth.module';
+export * from './lib/models/public-api';
+export * from './lib/services/public-api';
+export * from './lib/auth.module';
