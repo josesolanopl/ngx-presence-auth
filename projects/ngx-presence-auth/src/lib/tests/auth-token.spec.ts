@@ -14,10 +14,10 @@ import { AuthConfig } from '../services/config.service';
 
 interface SetUpOptions {
   token?: string;
-  includeToken?: AuthConfig['includeToken'];
+  shouldIncludeToken?: AuthConfig['shouldIncludeToken'];
 }
 
-const setUp = ({ token, includeToken }: SetUpOptions) => {
+const setUp = ({ token, shouldIncludeToken }: SetUpOptions) => {
   const apiUrl = 'http://api.test';
 
   TestBed.configureTestingModule({
@@ -25,7 +25,7 @@ const setUp = ({ token, includeToken }: SetUpOptions) => {
       HttpClientTestingModule,
       AuthModule.forRoot({
         apiUrl,
-        includeToken,
+        shouldIncludeToken,
       }),
     ],
     teardown: {
@@ -82,11 +82,11 @@ describe('Auth token handling', () => {
     httpTestingController.verify();
   });
 
-  it('Includes JWT if url provided in includeToken', () => {
+  it('Includes JWT if url provided in shouldIncludeToken', () => {
     const TOKEN = 'TOKEN';
     const { httpTestingController, httpClient } = setUp({
       token: TOKEN,
-      includeToken: [/\/test/i],
+      shouldIncludeToken: (req) => /\/test/i.test(req.url),
     });
 
     httpClient.get('/test').subscribe();
@@ -98,11 +98,11 @@ describe('Auth token handling', () => {
     httpTestingController.verify();
   });
 
-  it("doesn't include JWT if url not provided in includeToken", () => {
+  it("doesn't include JWT if url not provided in shouldIncludeToken", () => {
     const TOKEN = 'TOKEN';
     const { httpTestingController, httpClient } = setUp({
       token: TOKEN,
-      includeToken: [/\/not-test/i],
+      shouldIncludeToken: (req) => /\/not-test/i.test(req.url),
     });
 
     httpClient.get('/test').subscribe();
@@ -113,19 +113,19 @@ describe('Auth token handling', () => {
     httpTestingController.verify();
   });
 
-  it('401 without token should redirect to login', () => {
+  it('401 without existing token should not redirect to login', () => {
     const { apiService, httpClient, httpTestingController } = setUp({});
 
     httpClient.get('/test').subscribe();
 
-    expect(window.location).toBeAt(
+    expect(window.location).not.toBeAt(
       `${apiService.loginUrl}?next=http://localhost/`
     );
 
     httpTestingController.verify();
   });
 
-  it('401 with token to status url should redirect to login', () => {
+  it('401 with existing token to status url should redirect to login', () => {
     const TOKEN = 'TOKEN';
     const { apiService, httpTestingController } = setUp({ token: TOKEN });
 
@@ -144,7 +144,7 @@ describe('Auth token handling', () => {
     httpTestingController.verify();
   });
 
-  it('401 with token to no status url should refresh token', () => {
+  it('401 with existing token to no status url should refresh token', () => {
     const TOKEN = 'TOKEN';
     const { apiService, httpTestingController, httpClient } = setUp({
       token: TOKEN,
@@ -159,6 +159,33 @@ describe('Auth token handling', () => {
     });
 
     httpTestingController.expectOne(apiService.statusUrl);
+
+    httpTestingController.verify();
+  });
+
+  it('should redirect to login when refreshing token results in 401', () => {
+    const TOKEN = 'TOKEN';
+    const { apiService, httpTestingController, httpClient } = setUp({
+      token: TOKEN,
+    });
+
+    httpClient.get('/test').subscribe();
+
+    const testReq = httpTestingController.expectOne('/test');
+    testReq.flush('Invalid credentials', {
+      status: 401,
+      statusText: 'Unauthorized',
+    });
+
+    const refreshReq = httpTestingController.expectOne(apiService.statusUrl);
+    refreshReq.flush('Invalid credentials', {
+      status: 401,
+      statusText: 'Unauthorized',
+    });
+
+    expect(window.location).toBeAt(
+      `${apiService.loginUrl}?next=http://localhost/`
+    );
 
     httpTestingController.verify();
   });

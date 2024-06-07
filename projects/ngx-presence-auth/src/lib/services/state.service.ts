@@ -1,6 +1,11 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, EMPTY } from 'rxjs';
-import { first, map, switchMap } from 'rxjs/operators';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
+import {
+  distinctUntilChanged,
+  exhaustMap,
+  map,
+  shareReplay,
+} from 'rxjs/operators';
 import { AuthUser } from '../models/auth-user.model';
 import { AuthApiService } from './api.service';
 
@@ -15,61 +20,64 @@ interface AuthState {
 @Injectable()
 export class AuthStateService {
   private state$ = new BehaviorSubject<AuthState>({ status: 'idle' });
+  private checkStatus$ = new Subject<void>();
 
-  get isLoading$() {
-    return this.state$.pipe(map((state) => state.status === 'loading'));
-  }
+  isLoading$: Observable<boolean>;
+  isLoggedIn$: Observable<boolean>;
+  token$: Observable<string | undefined>;
+  user$: Observable<AuthUser | undefined>;
 
-  get isLoggedIn$() {
-    return this.state$.pipe(map((state) => state.status === 'success'));
-  }
-
-  private get authData$() {
-    return this.state$.pipe(
-      map((state) => {
-        if (state.status === 'success') {
-          return state.data;
-        }
-        return null;
-      })
+  constructor(private apiService: AuthApiService) {
+    this.isLoading$ = this.state$.pipe(
+      map((state) => state.status === 'loading'),
+      distinctUntilChanged(),
+      shareReplay({ bufferSize: 1, refCount: true })
     );
+    this.isLoggedIn$ = this.state$.pipe(
+      map((state) => {
+        const hasSucceded = state.status === 'success';
+        return hasSucceded && !!state.data?.token;
+      }),
+      distinctUntilChanged(),
+      shareReplay({ bufferSize: 1, refCount: true })
+    );
+    this.user$ = this.state$.pipe(
+      map((state) => state.data?.user),
+      distinctUntilChanged(),
+      shareReplay({ bufferSize: 1, refCount: true })
+    );
+    this.token$ = this.state$.pipe(
+      map((state) => state.data?.token),
+      distinctUntilChanged(),
+      shareReplay({ bufferSize: 1, refCount: true })
+    );
+
+    this.checkStatusEffect();
   }
 
-  get token$() {
-    return this.authData$.pipe(map((data) => data?.token));
+  checkStatus() {
+    this.checkStatus$.next();
   }
 
-  get user$() {
-    return this.authData$.pipe(map((data) => data?.user));
-  }
-
-  constructor(private apiService: AuthApiService) {}
-
-  authenticate() {
-    this.isLoading$
+  private checkStatusEffect() {
+    this.checkStatus$
       .pipe(
-        first(),
-        switchMap((isLoading) => {
-          if (isLoading) {
-            return EMPTY;
-          }
-
-          return this.checkStatus();
+        exhaustMap(() => {
+          this.setState({ status: 'loading' });
+          return this.apiService.status();
         })
       )
       .subscribe({
         next: (result) => {
-          this.state$.next({ status: 'success', data: result });
+          this.setState({ status: 'success', data: result });
         },
         error: (error) => {
           console.error('Error authenticating', error);
-          this.apiService.redirectToLogin();
         },
       });
   }
 
-  private checkStatus() {
-    this.state$.next({ status: 'loading' });
-    return this.apiService.status();
+  private setState(newState: Partial<AuthState>) {
+    this.state$.next({ ...this.state$.value, ...newState });
   }
 }

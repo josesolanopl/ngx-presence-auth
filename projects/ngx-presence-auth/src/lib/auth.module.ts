@@ -38,6 +38,6 @@ export class AuthModule {
       );
     }
 
-    authState.authenticate();
+    authState.checkStatus();
   }
 }

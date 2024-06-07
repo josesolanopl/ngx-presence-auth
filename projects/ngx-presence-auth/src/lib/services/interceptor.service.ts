@@ -32,25 +32,37 @@ export class AuthInterceptor implements HttpInterceptor {
     next: HttpHandler
   ): Observable<HttpEvent<any>> {
     const isStatus = req.url.includes(this.apiService.statusUrl);
-
     if (isStatus) {
-      return next.handle(req).pipe(
-        catchError((error) => {
-          console.error('Error authenticating', error);
-          this.apiService.redirectToLogin();
-          return EMPTY;
-        })
-      );
+      return this.handleStatusRequest(req, next);
     }
 
-    return this.handleRequestWithToken({ next, req });
+    return this.handleRequestWithToken(req, next);
   }
 
-  private handleRequestWithToken({
-    req,
-    next,
-    isRefresh,
-  }: HandleRefreshWithTokenOptions): Observable<HttpEvent<any>> {
+  private handleStatusRequest(
+    req: HttpRequest<any>,
+    next: HttpHandler
+  ): Observable<HttpEvent<any>> {
+    return next.handle(req).pipe(
+      catchError(() =>
+        this.authState.token$.pipe(
+          first(),
+          switchMap((existingToken) => {
+            if (existingToken) {
+              this.apiService.redirectToLogin();
+            }
+            return EMPTY;
+          })
+        )
+      )
+    );
+  }
+
+  private handleRequestWithToken(
+    req: HttpRequest<any>,
+    next: HttpHandler,
+    isRefresh = false
+  ): Observable<HttpEvent<any>> {
     return this.getToken().pipe(
       switchMap((token) => {
         const nextReq = this.applyTokenToReq(req, token);
@@ -62,21 +74,28 @@ export class AuthInterceptor implements HttpInterceptor {
               return throwError(() => error);
             }
 
-            if (!token || isRefresh) {
-              this.apiService.redirectToLogin();
-              return EMPTY;
-            }
-
-            return this.handleRefresh(next, nextReq);
+            return this.handle401Response(nextReq, next, isRefresh);
           })
         );
       })
     );
   }
 
-  private handleRefresh(next: HttpHandler, req: HttpRequest<any>) {
-    this.authState.authenticate();
-    return this.handleRequestWithToken({ next, req, isRefresh: true });
+  private handle401Response(
+    req: HttpRequest<any>,
+    next: HttpHandler,
+    isRefresh = false
+  ) {
+    if (isRefresh) {
+      this.apiService.redirectToLogin();
+      return EMPTY;
+    }
+    return this.handleRefresh(req, next);
+  }
+
+  private handleRefresh(req: HttpRequest<any>, next: HttpHandler) {
+    this.authState.checkStatus();
+    return this.handleRequestWithToken(req, next, true);
   }
 
   private applyTokenToReq(req: HttpRequest<any>, token?: string) {
@@ -84,10 +103,7 @@ export class AuthInterceptor implements HttpInterceptor {
       return req;
     }
 
-    const shouldAddToken = this.config.includeToken
-      ? this.config.includeToken.some((regex) => regex.test(req.url))
-      : true;
-
+    const shouldAddToken = this.shouldIncludeToken(req);
     if (!shouldAddToken) {
       return req;
     }
@@ -95,6 +111,13 @@ export class AuthInterceptor implements HttpInterceptor {
     return req.clone({
       setHeaders: { authorization: `JWT ${token}` },
     });
+  }
+
+  private shouldIncludeToken(req: HttpRequest<any>) {
+    if (!this.config.shouldIncludeToken) {
+      return true;
+    }
+    return this.config.shouldIncludeToken(req);
   }
 
   private getToken() {
